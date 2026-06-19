@@ -1,5 +1,6 @@
 import os
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+import random
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 from google.genai import types
@@ -7,79 +8,211 @@ from google.genai import types
 # Inicializamos el cliente de Gemini
 ai_client = genai.Client()
 
-# Definimos las XIV Áreas de Operación del ACS de CFI de la FAA
-AREAS_CFI = [
+# Diccionario con la estructura oficial del ACS de CFI (Áreas y sus Tareas)
+ESTRUCTURA_ACS = {
+    "I. Fundamentals of Instructing": [
+        "Task A: Human Behavior",
+        "Task B: The Learning Process",
+        "Task C: Effective Communication",
+        "Task D: The Teaching Process",
+        "Task E: Assessment",
+        "Task F: Flight Instructor Characteristics",
+        "Task G: Elements of Effective Instruction",
+        "💡 Pregunta de Examen Aleatoria (Área I)"
+    ],
+    "II. Technical Subject Areas": [
+        "Task A: Aeromedical Factors",
+        "Task B: Visual Inspection & Airworthiness",
+        "Task C: Principles of Flight",
+        "Task D: Airplane Flight Controls",
+        "Task E: Airplane Systems",
+        "Task F: Navigation & Flight Planning",
+        "Task G: Night Operations",
+        "Task H: High-Altitude Operations",
+        "Task I: Regulations & Endorsements",
+        "💡 Pregunta de Examen Aleatoria (Área II)"
+    ],
+    "III. Preflight Preparation": [
+        "Task A: Pilot Certificates & Documents",
+        "Task B: Weather Information",
+        "Task C: Operation of Systems",
+        "Task D: Performance & Limitations",
+        "Task E: Airworthiness Requirements"
+    ],
+    "IV. Preflight Lesson on a Maneuver": [
+        "Task A: Maneuver Lesson Description"
+    ],
+    "V. Airport Operations": [
+        "Task A: Radio Communications",
+        "Task B: Airport Markings & Lighting",
+        "Task C: Shotfield/Softfield Operations"
+    ],
+    "VI. Takeoffs, Landings, and Go-Arounds": [
+        "Task A: Normal Takeoff & Climb",
+        "Task B: Crosswind Takeoff & Climb",
+        "Task C: Short-Field Takeoff & Climb",
+        "Task D: Soft-Field Takeoff & Climb",
+        "Task E: Normal Approach & Landing",
+        "Task F: Slip to a Landing",
+        "Task G: Go-Around / Rejected Landing"
+    ],
+    "VII. Performance Maneuvers": [
+        "Task A: Steep Turns",
+        "Task B: Steep Spirals",
+        "Task C: Chandelles",
+        "Task D: Lazy Eights"
+    ],
+    "VIII. Ground Reference Maneuvers": [
+        "Task A: Rectangular Course",
+        "Task B: S-Turns",
+        "Task C: Turns Around a Point"
+    ],
+    "IX. Navigation": [
+        "Task A: Pilotage & Dead Reckoning",
+        "Task B: Navigation Systems",
+        "Task C: Diversion / Lost Procedures"
+    ],
+    "X. Slow Flight and Stalls": [
+        "Task A: Maneuvering in Slow Flight",
+        "Task B: Power-On Stalls",
+        "Task C: Power-Off Stalls",
+        "Task D: Accelerated Stalls",
+        "Task E: Spin Awareness"
+    ],
+    "XI. Emergency Operations": [
+        "Task A: Emergency Approach & Landing",
+        "Task B: Systems & Equipment Malfunctions",
+        "Task C: Emergency Descent"
+    ],
+    "XII. Multiengine Operations": [
+        "Task A: Engine Failure After Takeoff",
+        "Task B: VMC Demonstration",
+        "Task C: One-Engine Inoperative Approach"
+    ],
+    "XIII. Postflight Procedures": [
+        "Task A: Postflight Procedures"
+    ]
+}
+
+# Lista de las XIV Áreas para el Menú Principal (organizadas de 2 en 2)
+MENU_PRINCIPAL = [
     ["I. Fundamentals of Instructing", "II. Technical Subject Areas"],
     ["III. Preflight Preparation", "IV. Preflight Lesson on a Maneuver"],
     ["V. Airport Operations", "VI. Takeoffs, Landings, and Go-Arounds"],
     ["VII. Performance Maneuvers", "VIII. Ground Reference Maneuvers"],
     ["IX. Navigation", "X. Slow Flight and Stalls"],
     ["XI. Emergency Operations", "XII. Multiengine Operations"],
-    ["XIII. Postflight Procedures", "XIV. Regresar al Menú Principal"]
+    ["XIII. Postflight Procedures", "🔄 Reset / Ver Progreso"]
 ]
 
-# Instrucción base del sistema para obligar a Gemini a usar los manuales oficiales
-INSTRUCCION_BASE = (
-    "Actuarás estrictamente como un Examinador de Vuelo (DPE) de la FAA e Instructor de Vuelo Experto. "
-    "Tus respuestas deben basarse única y exclusivamente en los manuales oficiales de la FAA: "
-    "Pilot's Handbook of Aeronautical Knowledge (FAA-H-8083-25C), Aviation Instructor's Handbook (FAA-H-8083-9B), "
-    "Airplane Flying Handbook (FAA-H-8083-3C) y el Airman Certification Standards (FAA-S-ACS-25). "
-    "Si el usuario selecciona un área de operación, hazle una pregunta teórica o plantea un escenario "
-    "de evaluación basándote en los objetivos de conocimiento, gestión de riesgos o habilidades de esa área del ACS. "
-    "Mantén un tono profesional, riguroso y evalúa las respuestas como un verdadero examinador."
+# Instrucción maestra del sistema para Gemini
+INSTRUCCION_DPE = (
+    "Actuarás rigurosamente como un Examinador de Vuelo (DPE) de la FAA e Instructor de Vuelo Experto. "
+    "Tu objetivo es evaluar y preparar a un candidato a certificado de CFI de avión.\n\n"
+    "Usa exclusivamente como base teórica y normativa los siguientes manuales oficiales:\n"
+    "- Pilot's Handbook of Aeronautical Knowledge (FAA-H-8083-25C)\n"
+    "- Aviation Instructor's Handbook (FAA-H-8083-9B)\n"
+    "- Airplane Flying Handbook (FAA-H-8083-3C)\n"
+    "- Flight Instructor for Airplane Category Airman Certification Standards (FAA-S-ACS-25)\n\n"
+    "Cuando se te indique un Área de Operación y una Tarea (Task) del ACS, debes formular INMEDIATAMENTE una "
+    "pregunta de examen clara, directa y técnica que un examinador real haría en el examen práctico oral. "
+    "Puedes enfocar la pregunta en un elemento de Conocimiento (K), Gestión de Riesgos (R) o Habilidad (S) de dicha Task. "
+    "Si el usuario responde a tu pregunta, evalúa su respuesta críticamente, corrígelo con referencias exactas "
+    "del manual de la FAA si se equivoca, y mantén la simulación viva."
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra el panel interactivo con las áreas de operación"""
-    reply_markup = ReplyKeyboardMarkup(AREAS_CFI, resize_keyboard=True, one_time_keyboard=False)
+    """Muestra el menú principal con las Áreas de Operación"""
+    context.user_data["area_actual"] = None  # Limpiamos el estado
+    reply_markup = ReplyKeyboardMarkup(MENU_PRINCIPAL, resize_keyboard=True)
     
     await update.message.reply_text(
-        "✈️ **Bienvenido al Panel de Práctica de CFI** ✈️\n\n"
-        "He configurado mi sistema con los manuales oficiales de la FAA.\n"
-        "Por favor, selecciona una de las **XIV Áreas de Operación** del ACS en el menú de abajo "
-        "para comenzar tu sesión de entrenamiento interactiva con un escenario de examen:",
+        "✈️ **Sistema de Evaluación DPE - Certificado CFI** ✈️\n\n"
+        "Selecciona el **Área de Operación** que deseas evaluar. El bot desplegará las Tareas (Tasks) "
+        "correspondientes y generará una pregunta de examen de inmediato.",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
 
-async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto_usuario = update.message.text
+async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = update.message.text
     
-    # Si el usuario quiere reiniciar el menú
-    if "Regresar al Menú" in texto_usuario:
+    if texto == "🔄 Reset / Ver Progreso":
         await start(update, context)
         return
 
-    # Creamos un contexto dinámico según la opción que elija o lo que responda
-    prompt_final = texto_usuario
-    if any(texto_usuario in fila for fila in AREAS_CFI):
-        prompt_final = f"El usuario ha seleccionado repasar la siguiente sección del ACS de CFI: '{texto_usuario}'. Preséntale una pregunta de examen oral o un escenario práctico estricto basado en esa sección."
+    # CASO 1: El usuario seleccionó un Área de Operación del Menú Principal
+    if texto in ESTRUCTURA_ACS:
+        context.user_data["area_actual"] = texto  # Guardamos el área en la sesión del usuario
+        
+        # Estructuramos los botones de las tareas de esa área en filas de 1 o 2 botones
+        tareas = ESTRUCTURA_ACS[texto]
+        botones_tareas = [[tarea] for tarea in tareas]
+        botones_tareas.append(["⬅️ Volver al Menú de Áreas"])
+        
+        reply_markup = ReplyKeyboardMarkup(botones_tareas, resize_keyboard=True)
+        await update.message.reply_text(
+            f"📂 **{texto}**\n\n"
+            "Selecciona una **Task** específica de la lista de abajo para iniciar la pregunta o "
+            "puedes elegir el examen aleatorio de esta área:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return
 
+    # CASO 2: El usuario decide regresar desde el panel de tareas
+    if texto == "⬅️ Volver al Menú de Áreas":
+        await start(update, context)
+        return
+
+    # CASO 3: El usuario eligió una Task específica de un área
+    area_activa = context.user_data.get("area_actual")
+    if area_activa and (texto in ESTRUCTURA_ACS[area_activa] or "Pregunta" in texto):
+        prompt_solicitud = (
+            f"El candidato está listo para ser evaluado en el '{area_activa}', específicamente bajo la '{texto}'. "
+            f"Genera de inmediato una pregunta interactiva y profunda basada en el estándar ACS de la FAA para esta sección."
+        )
+        
+        await enviar_a_gemini(update, prompt_solicitud)
+        return
+
+    # CASO 4: El usuario está respondiendo a una pregunta previa del bot (Conversación libre de evaluación)
+    if area_activa:
+        prompt_respuesta = (
+            f"El usuario está respondiendo a tu pregunta anterior sobre el '{area_activa}'. "
+            f"Su respuesta fue: '{texto}'. Evalúala de acuerdo con los manuales de la FAA y retroaliméntalo."
+        )
+        await enviar_a_gemini(update, prompt_respuesta)
+    else:
+        await update.message.reply_text("Por favor, selecciona primero un Área de Operación en el menú inferior para empezar.")
+
+async def enviar_a_gemini(update: Update, prompt: str):
+    """Llamada unificada al motor de Gemini 2.5 Flash"""
     try:
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=prompt_final,
+            contents=prompt,
             config=types.GenerateContentConfig(
-                system_instruction=INSTRUCCION_BASE,
-                temperature=0.3
+                system_instruction=INSTRUCCION_DPE,
+                temperature=0.4
             )
         )
         await update.message.reply_text(response.text)
     except Exception as e:
-        await update.message.reply_text("Lo siento, tuve un problema al conectarme con el motor de evaluación.")
+        await update.message.reply_text("⚠️ Hubo un inconveniente al conectar con el simulador del DPE.")
         print(f"Error: {e}")
 
 def main():
     TOKEN = os.environ.get("TELEGRAM_TOKEN")
     if not TOKEN:
-        print("Error: No se encontró la variable TELEGRAM_TOKEN")
+        print("Error: Falta la variable TELEGRAM_TOKEN")
         return
 
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
     
-    print("Bot de CFI con Panel ACS iniciado correctamente...")
+    print("Bot CFI jerárquico corriendo con éxito en Railway...")
     app.run_polling()
 
 if __name__ == '__main__':
