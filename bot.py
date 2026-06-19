@@ -8,7 +8,7 @@ from google.genai import types
 # Inicializamos el cliente de Gemini
 ai_client = genai.Client()
 
-# Diccionario con la estructura oficial del ACS de CFI (Áreas y sus Tareas)
+# Diccionario oficial con las XIV Áreas de Operación del ACS de CFI y sus Tareas
 ESTRUCTURA_ACS = {
     "I. Fundamentals of Instructing": [
         "Task A: Human Behavior",
@@ -17,8 +17,7 @@ ESTRUCTURA_ACS = {
         "Task D: The Teaching Process",
         "Task E: Assessment",
         "Task F: Flight Instructor Characteristics",
-        "Task G: Elements of Effective Instruction",
-        "💡 Pregunta de Examen Aleatoria (Área I)"
+        "Task G: Elements of Effective Instruction"
     ],
     "II. Technical Subject Areas": [
         "Task A: Aeromedical Factors",
@@ -29,8 +28,7 @@ ESTRUCTURA_ACS = {
         "Task F: Navigation & Flight Planning",
         "Task G: Night Operations",
         "Task H: High-Altitude Operations",
-        "Task I: Regulations & Endorsements",
-        "💡 Pregunta de Examen Aleatoria (Área II)"
+        "Task I: Regulations & Endorsements"
     ],
     "III. Preflight Preparation": [
         "Task A: Pilot Certificates & Documents",
@@ -91,10 +89,13 @@ ESTRUCTURA_ACS = {
     ],
     "XIII. Postflight Procedures": [
         "Task A: Postflight Procedures"
+    ],
+    "XIV. Plan of Action": [
+        "Task A: Developing a Plan of Action"
     ]
 }
 
-# Lista de las XIV Áreas para el Menú Principal (organizadas de 2 en 2)
+# El menú principal ahora respeta de forma estricta las XIV áreas en pares limpios
 MENU_PRINCIPAL = [
     ["I. Fundamentals of Instructing", "II. Technical Subject Areas"],
     ["III. Preflight Preparation", "IV. Preflight Lesson on a Maneuver"],
@@ -102,10 +103,10 @@ MENU_PRINCIPAL = [
     ["VII. Performance Maneuvers", "VIII. Ground Reference Maneuvers"],
     ["IX. Navigation", "X. Slow Flight and Stalls"],
     ["XI. Emergency Operations", "XII. Multiengine Operations"],
-    ["XIII. Postflight Procedures", "🔄 Reset / Ver Progreso"]
+    ["XIII. Postflight Procedures", "XIV. Plan of Action"],
+    ["🔄 Reset / Volver al Inicio"]
 ]
 
-# Instrucción maestra del sistema para Gemini
 INSTRUCCION_DPE = (
     "Actuarás rigurosamente como un Examinador de Vuelo (DPE) de la FAA e Instructor de Vuelo Experto. "
     "Tu objetivo es evaluar y preparar a un candidato a certificado de CFI de avión.\n\n"
@@ -122,14 +123,12 @@ INSTRUCCION_DPE = (
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra el menú principal con las Áreas de Operación"""
-    context.user_data["area_actual"] = None  # Limpiamos el estado
+    context.user_data["area_actual"] = None
     reply_markup = ReplyKeyboardMarkup(MENU_PRINCIPAL, resize_keyboard=True)
     
     await update.message.reply_text(
-        "✈️ **Sistema de Evaluación DPE - Certificado CFI** ✈️\n\n"
-        "Selecciona el **Área de Operación** que deseas evaluar. El bot desplegará las Tareas (Tasks) "
-        "correspondientes y generará una pregunta de examen de inmediato.",
+        "✈️ **Sistema de Evaluación DPE - Certificado CFI (ACS Oficial)** ✈️\n\n"
+        "Selecciona el **Área de Operación** (I al XIV) que deseas evaluar para desplegar sus Tasks y lanzar una pregunta de examen:",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
@@ -137,57 +136,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
     
-    if texto == "🔄 Reset / Ver Progreso":
+    if texto == "🔄 Reset / Volver al Inicio":
         await start(update, context)
         return
 
-    # CASO 1: El usuario seleccionó un Área de Operación del Menú Principal
+    # Si elige un Área de Operación válida
     if texto in ESTRUCTURA_ACS:
-        context.user_data["area_actual"] = texto  # Guardamos el área en la sesión del usuario
+        context.user_data["area_actual"] = texto
         
-        # Estructuramos los botones de las tareas de esa área en filas de 1 o 2 botones
         tareas = ESTRUCTURA_ACS[texto]
         botones_tareas = [[tarea] for tarea in tareas]
+        botones_tareas.append(["💡 Pregunta Aleatoria de esta Área"])
         botones_tareas.append(["⬅️ Volver al Menú de Áreas"])
         
         reply_markup = ReplyKeyboardMarkup(botones_tareas, resize_keyboard=True)
         await update.message.reply_text(
-            f"📂 **{texto}**\n\n"
-            "Selecciona una **Task** específica de la lista de abajo para iniciar la pregunta o "
-            "puedes elegir el examen aleatorio de esta área:",
+            f"📂 **{texto}**\n\nSelecciona una **Task** específica para iniciar la pregunta del examen oral:",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
         return
 
-    # CASO 2: El usuario decide regresar desde el panel de tareas
     if texto == "⬅️ Volver al Menú de Áreas":
         await start(update, context)
         return
 
-    # CASO 3: El usuario eligió una Task específica de un área
+    # Si selecciona una Task o la pregunta aleatoria dentro de un área activa
     area_activa = context.user_data.get("area_actual")
-    if area_activa and (texto in ESTRUCTURA_ACS[area_activa] or "Pregunta" in texto):
+    if area_activa and (texto in ESTRUCTURA_ACS[area_activa] or "Pregunta Aleatoria" in texto):
         prompt_solicitud = (
-            f"El candidato está listo para ser evaluado en el '{area_activa}', específicamente bajo la '{texto}'. "
-            f"Genera de inmediato una pregunta interactiva y profunda basada en el estándar ACS de la FAA para esta sección."
+            f"El candidato está listo para ser evaluado en '{area_activa}', específicamente bajo la opción '{texto}'. "
+            f"Genera inmediatamente una pregunta interactiva y profunda basada en el estándar ACS de la FAA para esta sección."
         )
-        
         await enviar_a_gemini(update, prompt_solicitud)
         return
 
-    # CASO 4: El usuario está respondiendo a una pregunta previa del bot (Conversación libre de evaluación)
+    # Si es una respuesta a una pregunta abierta del bot
     if area_activa:
         prompt_respuesta = (
             f"El usuario está respondiendo a tu pregunta anterior sobre el '{area_activa}'. "
-            f"Su respuesta fue: '{texto}'. Evalúala de acuerdo con los manuales de la FAA y retroaliméntalo."
+            f"Su respuesta fue: '{texto}'. Evalúala críticamente de acuerdo con los manuales de la FAA y retroalimenta."
         )
         await enviar_a_gemini(update, prompt_respuesta)
     else:
-        await update.message.reply_text("Por favor, selecciona primero un Área de Operación en el menú inferior para empezar.")
+        await update.message.reply_text("Por favor, selecciona primero un Área de Operación en el menú para comenzar.")
 
 async def enviar_a_gemini(update: Update, prompt: str):
-    """Llamada unificada al motor de Gemini 2.5 Flash"""
     try:
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
@@ -212,7 +206,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
     
-    print("Bot CFI jerárquico corriendo con éxito en Railway...")
+    print("Bot CFI corregido corriendo con éxito en Railway...")
     app.run_polling()
 
 if __name__ == '__main__':
